@@ -239,7 +239,72 @@ function InputRow({ label, value, onChange, prefix = '$', suffix, tip, type = 'n
 
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 
-type Tab = 'cost' | 'selling' | 'analysis' | 'currency' | 'saved';
+type Tab = 'cost' | 'selling' | 'analysis' | 'currency' | 'saved' | 'batch';
+
+// ─── BATCH INVOICE TYPES ──────────────────────────────────────────────────────
+
+interface BatchRow {
+  id: string;
+  description: string;
+  size: string;       // e.g. "45cm", "60cm", "Large"
+  unitCost: number;   // cost from invoice
+  qty: number;
+}
+
+interface BatchShared {
+  freight: number;
+  serviceFee: number;
+  otherFees: number;
+  dutyPct: number;
+  vatPct: number;
+  marginPct: number;
+  currency: string;
+}
+
+const DEFAULT_BATCH_SHARED: BatchShared = {
+  freight: 0, serviceFee: 0, otherFees: 0,
+  dutyPct: 0, vatPct: 0, marginPct: 30, currency: 'USD',
+};
+
+function newBatchRow(id: string): BatchRow {
+  return { id, description: '', size: '', unitCost: 0, qty: 1 };
+}
+
+interface BatchItemResult {
+  row: BatchRow;
+  totalCost: number;          // unitCost × qty
+  allocatedShared: number;    // proportion of freight+fees
+  landedCostTotal: number;    // totalCost + allocatedShared + duty + vat
+  landedCostPerUnit: number;
+  sellingPricePerUnit: number;
+  profitPerUnit: number;
+  marginActual: number;
+}
+
+function computeBatch(rows: BatchRow[], shared: BatchShared, rates: Record<string, number>): BatchItemResult[] {
+  const rate = rates[shared.currency] || 1;
+  const toUSD = (v: number) => v / rate;
+
+  const totalInvoice = rows.reduce((s, r) => s + r.unitCost * r.qty, 0);
+  const totalShared = toUSD(shared.freight + shared.serviceFee + shared.otherFees);
+
+  return rows.map(row => {
+    const totalCost = toUSD(row.unitCost * row.qty);
+    const share = totalInvoice > 0 ? (row.unitCost * row.qty) / totalInvoice : 0;
+    const allocatedShared = totalShared * share;
+    const subtotal = totalCost + allocatedShared;
+    const dutyAmt = subtotal * (shared.dutyPct / 100);
+    const vatAmt = (subtotal + dutyAmt) * (shared.vatPct / 100);
+    const landedCostTotal = subtotal + dutyAmt + vatAmt;
+    const landedCostPerUnit = row.qty > 0 ? landedCostTotal / row.qty : landedCostTotal;
+    const sellingPricePerUnit = shared.marginPct < 100
+      ? landedCostPerUnit / (1 - shared.marginPct / 100)
+      : landedCostPerUnit * 2;
+    const profitPerUnit = sellingPricePerUnit - landedCostPerUnit;
+    const marginActual = sellingPricePerUnit > 0 ? (profitPerUnit / sellingPricePerUnit) * 100 : 0;
+    return { row, totalCost, allocatedShared, landedCostTotal, landedCostPerUnit, sellingPricePerUnit, profitPerUnit, marginActual };
+  });
+}
 
 const DEFAULT_COST: CostInputs = {
   productCost: 0, quantity: 1, supplierCharges: 0, packagingCost: 0,
@@ -267,6 +332,9 @@ export default function PriceCalc() {
   const [convertFrom, setConvertFrom] = useState('USD');
   const [convertTo, setConvertTo] = useState('MVR');
   const [monthlyUnits, setMonthlyUnits] = useState(100);
+  const [batchRows, setBatchRows] = useState<BatchRow[]>([newBatchRow('r1'), newBatchRow('r2'), newBatchRow('r3')]);
+  const [batchShared, setBatchShared] = useState<BatchShared>(DEFAULT_BATCH_SHARED);
+  const [batchNextId, setBatchNextId] = useState(4);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
@@ -393,6 +461,7 @@ export default function PriceCalc() {
     { key: 'cost', icon: '📦', label: 'Product Cost' },
     { key: 'selling', icon: '💰', label: 'Selling Price' },
     { key: 'analysis', icon: '📊', label: 'Analysis' },
+    { key: 'batch', icon: '🧾', label: 'Invoice Pricer' },
     { key: 'currency', icon: '💱', label: 'Currency' },
     { key: 'saved', icon: '💾', label: 'Saved' },
   ];
@@ -717,6 +786,189 @@ export default function PriceCalc() {
           </div>
         </div>
       )}
+
+      {/* ─── BATCH INVOICE TAB ───────────────────────────────────────────── */}
+      {tab === 'batch' && (() => {
+        const batchResults = computeBatch(batchRows, batchShared, rates);
+        const rate = rates[batchShared.currency] || 1;
+        const toDisp = (usd: number) => usd * rate;
+        const fmtB = (usd: number, dp = 2) => fmt(toDisp(usd), batchShared.currency, dp);
+
+        const totalInvoice = batchRows.reduce((s, r) => s + r.unitCost * r.qty, 0);
+        const totalLanded = batchResults.reduce((s, r) => s + r.landedCostTotal, 0);
+        const totalSelling = batchResults.reduce((s, r) => s + r.sellingPricePerUnit * r.row.qty, 0);
+        const totalProfit = batchResults.reduce((s, r) => s + r.profitPerUnit * r.row.qty, 0);
+
+        const addRow = () => {
+          const id = `r${batchNextId}`;
+          setBatchNextId(n => n + 1);
+          setBatchRows(rows => [...rows, newBatchRow(id)]);
+        };
+
+        const updateRow = (id: string, field: keyof BatchRow, value: string | number) => {
+          setBatchRows(rows => rows.map(r => r.id === id ? { ...r, [field]: value } : r));
+        };
+
+        const removeRow = (id: string) => {
+          setBatchRows(rows => rows.filter(r => r.id !== id));
+        };
+
+        const exportBatchCSV = () => {
+          const headers = ['Description', 'Size', 'Qty', `Unit Cost (${batchShared.currency})`, `Invoice Total`, `Allocated Costs`, `Landed Cost/Unit`, `Selling Price/Unit`, `Profit/Unit`, `Margin %`];
+          const dataRows = batchResults.map(r => [
+            r.row.description,
+            r.row.size,
+            r.row.qty,
+            r.row.unitCost.toFixed(2),
+            toDisp(r.totalCost).toFixed(2),
+            toDisp(r.allocatedShared).toFixed(2),
+            toDisp(r.landedCostPerUnit).toFixed(2),
+            toDisp(r.sellingPricePerUnit).toFixed(2),
+            toDisp(r.profitPerUnit).toFixed(2),
+            r.marginActual.toFixed(1) + '%',
+          ]);
+          const csv = [headers, ...dataRows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url;
+          a.download = `invoice-prices-${new Date().toISOString().slice(0, 10)}.csv`;
+          a.click(); URL.revokeObjectURL(url);
+        };
+
+        return (
+          <div className="fade-in">
+            {/* Shared import costs */}
+            <div className="card" style={{ marginBottom: '1rem' }}>
+              <div className="section-head">
+                <div className="section-title"><span className="section-icon" style={{ background: 'var(--amber-soft)' }}>🚢</span>Shared Import Costs</div>
+                <select className="form-select" style={{ width: 'auto' }} value={batchShared.currency}
+                  onChange={e => setBatchShared(s => ({ ...s, currency: e.target.value }))}>
+                  {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.flag} {c.code}</option>)}
+                </select>
+              </div>
+              <div className="grid-3" style={{ gap: '0.75rem', marginBottom: '0.75rem' }}>
+                {([
+                  ['Freight / Shipping', 'freight'],
+                  ['Service / Agent Fee', 'serviceFee'],
+                  ['Other Fees', 'otherFees'],
+                ] as [string, keyof BatchShared][]).map(([label, field]) => (
+                  <div className="form-group" key={field} style={{ marginBottom: 0 }}>
+                    <label className="form-label">{label} ({batchShared.currency})</label>
+                    <input className="form-input mono" type="number" min="0" step="0.01"
+                      value={batchShared[field] as number}
+                      onChange={e => setBatchShared(s => ({ ...s, [field]: parseFloat(e.target.value) || 0 }))} />
+                  </div>
+                ))}
+              </div>
+              <div className="grid-3" style={{ gap: '0.75rem' }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Customs Duty %</label>
+                  <input className="form-input mono" type="number" min="0" max="100" step="0.1"
+                    value={batchShared.dutyPct}
+                    onChange={e => setBatchShared(s => ({ ...s, dutyPct: parseFloat(e.target.value) || 0 }))} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">VAT / Tax %</label>
+                  <input className="form-input mono" type="number" min="0" max="100" step="0.1"
+                    value={batchShared.vatPct}
+                    onChange={e => setBatchShared(s => ({ ...s, vatPct: parseFloat(e.target.value) || 0 }))} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Target Margin %</label>
+                  <input className="form-input mono" type="number" min="1" max="99" step="1"
+                    value={batchShared.marginPct}
+                    onChange={e => setBatchShared(s => ({ ...s, marginPct: parseFloat(e.target.value) || 30 }))} />
+                </div>
+              </div>
+              <p className="tip" style={{ marginTop: '0.5rem' }}>Freight & fees are split across all items proportionally by invoice value</p>
+            </div>
+
+            {/* Items table */}
+            <div className="card" style={{ marginBottom: '1rem' }}>
+              <div className="section-head">
+                <div className="section-title"><span className="section-icon" style={{ background: 'var(--blue-soft)' }}>📋</span>Invoice Items</div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className="btn btn-ghost btn-sm no-print" onClick={exportBatchCSV}>⬇ CSV</button>
+                  <button className="btn btn-primary btn-sm" onClick={addRow}>+ Add Row</button>
+                </div>
+              </div>
+
+              {/* Desktop table */}
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem', minWidth: 700 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                      {['Description', 'Size / Variant', `Unit Cost (${batchShared.currency})`, 'Qty', 'Landed Cost/Unit', 'Selling Price/Unit', 'Profit/Unit', ''].map(h => (
+                        <th key={h} style={{ padding: '0.5rem 0.625rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchResults.map((res, i) => (
+                      <tr key={res.row.id} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'var(--surface2)' }}>
+                        <td style={{ padding: '0.375rem 0.625rem' }}>
+                          <input style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', width: '100%', fontSize: '0.8125rem' }}
+                            placeholder="e.g. Doll, T-shirt…"
+                            value={res.row.description}
+                            onChange={e => updateRow(res.row.id, 'description', e.target.value)} />
+                        </td>
+                        <td style={{ padding: '0.375rem 0.625rem' }}>
+                          <input style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', width: '80px', fontSize: '0.8125rem' }}
+                            placeholder="45cm, L, XL…"
+                            value={res.row.size}
+                            onChange={e => updateRow(res.row.id, 'size', e.target.value)} />
+                        </td>
+                        <td style={{ padding: '0.375rem 0.625rem' }}>
+                          <input style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', width: '80px', fontSize: '0.875rem', fontFamily: 'monospace', textAlign: 'right' }}
+                            type="number" min="0" step="0.01"
+                            value={res.row.unitCost || ''}
+                            onChange={e => updateRow(res.row.id, 'unitCost', parseFloat(e.target.value) || 0)} />
+                        </td>
+                        <td style={{ padding: '0.375rem 0.625rem' }}>
+                          <input style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', width: '50px', fontSize: '0.875rem', fontFamily: 'monospace', textAlign: 'right' }}
+                            type="number" min="1" step="1"
+                            value={res.row.qty}
+                            onChange={e => updateRow(res.row.id, 'qty', parseInt(e.target.value) || 1)} />
+                        </td>
+                        <td style={{ padding: '0.375rem 0.625rem', fontWeight: 600, color: 'var(--text)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                          {fmtB(res.landedCostPerUnit)}
+                        </td>
+                        <td style={{ padding: '0.375rem 0.625rem', fontWeight: 800, color: 'var(--blue)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', fontSize: '0.9375rem' }}>
+                          {fmtB(res.sellingPricePerUnit)}
+                        </td>
+                        <td style={{ padding: '0.375rem 0.625rem', fontWeight: 700, color: res.profitPerUnit >= 0 ? 'var(--emerald)' : 'var(--red)', whiteSpace: 'nowrap' }}>
+                          {fmtB(res.profitPerUnit)}
+                          <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginLeft: '0.25rem' }}>({res.marginActual.toFixed(1)}%)</span>
+                        </td>
+                        <td style={{ padding: '0.375rem 0.625rem' }}>
+                          <button style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: '0.125rem 0.25rem' }}
+                            onClick={() => removeRow(res.row.id)} title="Remove row">✕</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="tip" style={{ marginTop: '0.5rem' }}>Enter unit costs exactly as shown on the invoice. Selling prices update automatically.</p>
+            </div>
+
+            {/* Summary */}
+            <div className="stat-grid stat-grid-4" style={{ marginBottom: '1rem' }}>
+              {[
+                { label: 'Invoice Total', val: fmt(totalInvoice, batchShared.currency), color: 'var(--text)' },
+                { label: 'Total Landed Cost', val: fmtB(totalLanded / rate), color: 'var(--amber)' },
+                { label: 'Total Selling Value', val: fmtB(totalSelling / rate), color: 'var(--blue)' },
+                { label: 'Total Profit', val: fmtB(totalProfit / rate), color: totalProfit >= 0 ? 'var(--emerald)' : 'var(--red)' },
+              ].map(s => (
+                <div className="stat-box" key={s.label}>
+                  <div className="stat-val" style={{ color: s.color, fontSize: '1.25rem' }}>{s.val}</div>
+                  <div className="stat-label">{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ─── CURRENCY TAB ─────────────────────────────────────────────────── */}
       {tab === 'currency' && (
