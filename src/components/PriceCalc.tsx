@@ -270,6 +270,13 @@ function newBatchRow(id: string): BatchRow {
   return { id, description: '', size: '', unitCost: 0, qty: 1 };
 }
 
+const SIZE_OPTIONS = [
+  { group: 'Apparel', options: ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL'] },
+  { group: 'CM Sizes', options: ['10cm','12cm','15cm','18cm','20cm','22cm','25cm','27cm','28cm','30cm','35cm','36cm','40cm','45cm','48cm','50cm','55cm','60cm','63cm','65cm','70cm','75cm','80cm','85cm','90cm','100cm','110cm','120cm','130cm','140cm','150cm','160cm','180cm','200cm'] },
+  { group: 'Inch Sizes', options: ['4"','6"','8"','10"','12"','14"','16"','18"','20"','24"','30"','36"'] },
+  { group: 'Other', options: ['One Size', 'Pack', 'Pair', 'Set', 'Box', 'Dozen', 'Bundle'] },
+];
+
 interface BatchItemResult {
   row: BatchRow;
   totalCost: number;          // unitCost × qty
@@ -898,7 +905,7 @@ export default function PriceCalc() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem', minWidth: 700 }}>
                   <thead>
                     <tr style={{ borderBottom: '2px solid var(--border)' }}>
-                      {['Description', 'Size / Variant', `Unit Cost (${batchShared.currency})`, 'Qty', 'Landed Cost/Unit', 'Selling Price/Unit', 'Profit/Unit', ''].map(h => (
+                      {['Description', 'Size / Variant ▾', `Unit Cost (${batchShared.currency})`, 'Qty', 'Landed Cost/Unit', 'Selling Price/Unit', 'Profit/Unit', ''].map(h => (
                         <th key={h} style={{ padding: '0.5rem 0.625rem', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{h}</th>
                       ))}
                     </tr>
@@ -913,10 +920,22 @@ export default function PriceCalc() {
                             onChange={e => updateRow(res.row.id, 'description', e.target.value)} />
                         </td>
                         <td style={{ padding: '0.375rem 0.625rem' }}>
-                          <input style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', width: '80px', fontSize: '0.8125rem' }}
-                            placeholder="45cm, L, XL…"
+                          <input
+                            list="size-options"
+                            style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6, outline: 'none', color: 'var(--text)', width: '110px', fontSize: '0.8125rem', padding: '0.25rem 0.5rem', cursor: 'pointer' }}
+                            placeholder="Select or type…"
                             value={res.row.size}
                             onChange={e => updateRow(res.row.id, 'size', e.target.value)} />
+                          <datalist id="size-options">
+                            <optgroup label="── Apparel ──" />
+                            {SIZE_OPTIONS[0].options.map(s => <option key={s} value={s} />)}
+                            <optgroup label="── CM Sizes ──" />
+                            {SIZE_OPTIONS[1].options.map(s => <option key={s} value={s} />)}
+                            <optgroup label="── Inch Sizes ──" />
+                            {SIZE_OPTIONS[2].options.map(s => <option key={s} value={s} />)}
+                            <optgroup label="── Other ──" />
+                            {SIZE_OPTIONS[3].options.map(s => <option key={s} value={s} />)}
+                          </datalist>
                         </td>
                         <td style={{ padding: '0.375rem 0.625rem' }}>
                           <input style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', width: '80px', fontSize: '0.875rem', fontFamily: 'monospace', textAlign: 'right' }}
