@@ -150,7 +150,7 @@ function computeSelling(costPerItem: number, s: SellingInputs): SellingResult {
 
 // ─── SVG PIE CHART ────────────────────────────────────────────────────────────
 
-const PIE_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4'];
+const PIE_COLORS = ['#7c4dff', '#10B981', '#d946ef', '#F59E0B', '#EF4444', '#06B6D4'];
 
 function PieChart({ data }: { data: { label: string; amount: number; pct: number }[] }) {
   if (!data.length) return null;
@@ -1021,7 +1021,7 @@ export default function PriceCalc() {
                     {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.flag} {c.code} — {c.name}</option>)}
                   </select>
                 </div>
-                <div className="card card-sm" style={{ background: 'var(--blue-soft)', border: '1px solid rgba(59,130,246,0.3)', textAlign: 'center', marginTop: '0.5rem' }}>
+                <div className="card card-sm" style={{ background: 'var(--blue-soft)', border: '1px solid rgba(124,77,255,0.3)', textAlign: 'center', marginTop: '0.5rem' }}>
                   <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
                     {convertAmt} {convertFrom} =
                   </div>
